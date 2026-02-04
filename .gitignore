@@ -1,0 +1,50 @@
+# Build artifacts
+/target/
+/build/
+*.o
+*.a
+*.iso
+*.img
+Cargo.lock
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Debug logs
+*.log
+bochs.log
+
+# Backup files
+*.bak
+*.backup
+*.orig
+
+# Generated files
+*.d
+
+# QEMU files
+*.qcow2
+
+# Temporary files
+*.tmp
+*.temp
+
+# Core dumps
+core
+*.core
+
+# GDB files
+.gdb_history
+
+# Profiling data
+*.gcda
+*.gcno
+*.gcov
+
+# Rust-specific
+**/*.rs.bk

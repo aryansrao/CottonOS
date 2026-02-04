@@ -1,0 +1,14 @@
+# Bochs configuration for CottonOS
+megs: 512
+display_library: sdl2
+romimage: file=/opt/homebrew/share/bochs/BIOS-bochs-latest
+vgaromimage: file=/opt/homebrew/share/bochs/VGABIOS-lgpl-latest
+ata0: enabled=1, ioaddr1=0x1f0, ioaddr2=0x3f0, irq=14
+ata0-master: type=cdrom, path="build/cottonos.iso", status=inserted
+ata0-slave: type=disk, path="build/cottonos.img", mode=flat
+boot: cdrom
+log: bochs.log
+panic: action=ask
+error: action=report
+info: action=report
+debug: action=ignore

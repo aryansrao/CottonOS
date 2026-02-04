@@ -1,0 +1,23 @@
+[package]
+name = "cotton_bootloader"
+version = "0.1.0"
+edition = "2021"
+authors = ["aryansrao"]
+description = "CottonOS bootloader"
+
+[lib]
+crate-type = ["staticlib"]
+
+[features]
+default = []
+x86_64 = []
+aarch64 = []
+uefi = []
+bios = []
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = true

@@ -1,0 +1,12 @@
+[build]
+target = "x86_64-unknown-none"
+
+[target.x86_64-unknown-none]
+rustflags = ["-C", "link-arg=-Tlinker/x86_64_direct.ld", "-C", "relocation-model=static"]
+
+[target.aarch64-unknown-none]
+rustflags = ["-C", "link-arg=-Tlinker/aarch64.ld"]
+
+[unstable]
+build-std = ["core", "compiler_builtins", "alloc"]
+build-std-features = ["compiler-builtins-mem"]

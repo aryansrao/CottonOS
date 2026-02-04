@@ -1,0 +1,15 @@
+[workspace]
+members = [
+    "kernel",
+    "bootloader",
+    "userspace",
+]
+resolver = "2"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = true
+opt-level = "z"
