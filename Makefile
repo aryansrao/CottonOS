@@ -36,7 +36,7 @@ ISO_FILE := $(BUILD_DIR)/cottonos.iso
 DISK_IMG := $(BUILD_DIR)/disk.img
 
 # QEMU options - use bochs-display for better VESA support
-QEMU_BASE := -m 512M -device VGA,vgamem_mb=64 -no-reboot
+QEMU_BASE := -m 512M -device VGA,vgamem_mb=64 -nic user,model=rtl8139 -no-reboot
 QEMU_DISK := -drive file=$(DISK_IMG),format=raw,if=ide
 
 all: kernel

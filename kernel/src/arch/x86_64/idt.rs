@@ -445,6 +445,7 @@ extern "C" fn irq_common_handler(irq: u8) {
     match irq {
         0 => crate::proc::scheduler::timer_tick(),
         1 => crate::drivers::keyboard::handle_interrupt(),
+        11 => crate::drivers::network::handle_interrupt(),
         12 => crate::drivers::mouse::handle_interrupt(),
         _ => {}
     }

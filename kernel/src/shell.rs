@@ -64,7 +64,7 @@ pub fn execute_command(line: &str) -> String {
     match cmd {
         "help" => {
             if args.is_empty() {
-                String::from("Commands: help, clear, info, mem, df, ps, uptime, echo, sync, reboot, halt\nFiles:    ls, cd, pwd, cat, touch, mkdir, rm, write\n\nFiles are stored persistently on disk (CottonFS).")
+                String::from("Commands: help, clear, info, mem, df, ps, uptime, echo, sync, reboot, halt\nNetwork:  net, netstats, arptable, arp, ping, dhcp, dns, setip, setmask, setgw, setdns\nTCP:      tcpconnect, tcpsend, tcprecv, tcpclose, httpget\nUDP:      udpsend, udprecv\nFiles:    ls, cd, pwd, cat, touch, mkdir, rm, write\n\nFiles are stored persistently on disk (CottonFS).")
             } else {
                 exec_help_detail(args[0])
             }
@@ -77,6 +77,24 @@ pub fn execute_command(line: &str) -> String {
         "ps" => exec_ps(),
         "uptime" => exec_uptime(),
         "echo" => args.join(" "),
+        "net" => exec_net(),
+        "netstats" => exec_netstats(),
+        "arptable" => exec_arptable(),
+        "arp" => exec_arp(args),
+        "ping" => exec_ping(args),
+        "dhcp" => exec_dhcp(),
+        "dns" => exec_dns(args),
+        "setip" => exec_setip(args),
+        "setmask" => exec_setmask(args),
+        "setgw" => exec_setgw(args),
+        "setdns" => exec_setdns(args),
+        "tcpconnect" => exec_tcpconnect(args),
+        "tcpsend" => exec_tcpsend(args),
+        "tcprecv" => exec_tcprecv(),
+        "tcpclose" => exec_tcpclose(),
+        "httpget" => exec_httpget(args),
+        "udpsend" => exec_udpsend(args),
+        "udprecv" => exec_udprecv(),
         "panic" => { panic!("User-triggered panic"); }
         "reboot" => { cmd_reboot(); String::from("Rebooting...") }
         "halt" => { cmd_halt(); String::from("System halted.") }
@@ -109,10 +127,384 @@ fn exec_help_detail(cmd: &str) -> String {
         "ps" => String::from("ps - List running processes"),
         "uptime" => String::from("uptime - Show system uptime"),
         "echo" => String::from("echo <text> - Print text"),
+        "net" => String::from("net - Show network interface information"),
+        "netstats" => String::from("netstats - Show network packet counters"),
+        "arptable" => String::from("arptable - Show ARP cache"),
+        "arp" => String::from("arp <ip> - Send ARP request to host"),
+        "ping" => String::from("ping <ip> - Send ICMP echo request"),
+        "dhcp" => String::from("dhcp - Request IPv4 config via DHCP"),
+        "dns" => String::from("dns <host> - Resolve hostname to IPv4"),
+        "setip" => String::from("setip <ip> - Set interface IPv4 address"),
+        "setmask" => String::from("setmask <mask> - Set netmask"),
+        "setgw" => String::from("setgw <ip> - Set default gateway"),
+        "setdns" => String::from("setdns <ip> - Set DNS server"),
+        "tcpconnect" => String::from("tcpconnect <ip> <port> - Open TCP connection"),
+        "tcpsend" => String::from("tcpsend <text> - Send TCP payload on active connection"),
+        "tcprecv" => String::from("tcprecv - Read buffered TCP payload"),
+        "tcpclose" => String::from("tcpclose - Close active TCP connection"),
+        "httpget" => String::from("httpget <ip> [path] - Basic HTTP GET over TCP"),
+        "udpsend" => String::from("udpsend <ip> <src_port> <dst_port> <text> - Send UDP datagram"),
+        "udprecv" => String::from("udprecv - Receive one UDP datagram"),
         "clear" => String::from("clear - Clear the screen"),
         "reboot" => String::from("reboot - Restart the system"),
         "halt" => String::from("halt - Stop the CPU"),
         _ => format!("Unknown command: {}", cmd),
+    }
+}
+
+fn parse_ipv4(s: &str) -> Option<[u8; 4]> {
+    let parts: Vec<&str> = s.split('.').collect();
+    if parts.len() != 4 {
+        return None;
+    }
+    let mut out = [0u8; 4];
+    for (idx, part) in parts.iter().enumerate() {
+        out[idx] = part.parse::<u8>().ok()?;
+    }
+    Some(out)
+}
+
+fn fmt_ipv4(ip: [u8; 4]) -> String {
+    format!("{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3])
+}
+
+fn fmt_mac(mac: [u8; 6]) -> String {
+    format!(
+        "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+    )
+}
+
+fn exec_net() -> String {
+    if !crate::drivers::network::is_available() {
+        return String::from("Network: unavailable (RTL8139 not detected)");
+    }
+
+    let mac = crate::drivers::network::mac().unwrap_or([0; 6]);
+    let ip = crate::drivers::network::ip();
+    let mask = crate::drivers::network::netmask();
+    let gw = crate::drivers::network::gateway();
+    let dns = crate::drivers::network::dns_server();
+
+    format!(
+        "Network interface: rtl8139\n  MAC: {}\n  IPv4: {}\n  Netmask: {}\n  Gateway: {}\n  DNS: {}",
+        fmt_mac(mac),
+        fmt_ipv4(ip),
+        fmt_ipv4(mask),
+        fmt_ipv4(gw),
+        fmt_ipv4(dns)
+    )
+}
+
+fn exec_netstats() -> String {
+    let (rx, tx, rx_err, tx_err, icmp_rx, icmp_tx) = crate::drivers::network::stats();
+    format!(
+        "Network counters:\n  RX packets: {}\n  TX packets: {}\n  RX errors:  {}\n  TX errors:  {}\n  ICMP echo rx: {}\n  ICMP echo tx: {}",
+        rx, tx, rx_err, tx_err, icmp_rx, icmp_tx
+    )
+}
+
+fn exec_arptable() -> String {
+    let entries = crate::drivers::network::arp_entries();
+    let mut out = String::from("ARP table:");
+    let mut any = false;
+    for (ip, mac, valid) in entries {
+        if valid {
+            any = true;
+            out.push_str(&format!("\n  {:15} -> {}", fmt_ipv4(ip), fmt_mac(mac)));
+        }
+    }
+    if !any {
+        out.push_str("\n  (empty)");
+    }
+    out
+}
+
+fn exec_arp(args: &[&str]) -> String {
+    if args.is_empty() {
+        return String::from("arp: usage: arp <ip>");
+    }
+    let ip = match parse_ipv4(args[0]) {
+        Some(ip) => ip,
+        None => return String::from("arp: invalid IPv4 address"),
+    };
+
+    match crate::drivers::network::request_arp(ip) {
+        Ok(()) => format!("ARP request sent for {}", fmt_ipv4(ip)),
+        Err(e) => format!("arp: {}", e),
+    }
+}
+
+fn exec_ping(args: &[&str]) -> String {
+    if args.is_empty() {
+        return String::from("ping: usage: ping <ip>");
+    }
+    let ip = match parse_ipv4(args[0]) {
+        Some(ip) => ip,
+        None => return String::from("ping: invalid IPv4 address"),
+    };
+
+    match crate::drivers::network::ping(ip) {
+        Ok(()) => format!("ICMP echo request sent to {}", fmt_ipv4(ip)),
+        Err(e) => format!("ping: {}", e),
+    }
+}
+
+fn exec_setip(args: &[&str]) -> String {
+    if args.is_empty() {
+        return String::from("setip: usage: setip <ipv4>");
+    }
+    let ip = match parse_ipv4(args[0]) {
+        Some(ip) => ip,
+        None => return String::from("setip: invalid IPv4 address"),
+    };
+    crate::drivers::network::set_ip(ip);
+    format!("IP set to {}", fmt_ipv4(ip))
+}
+
+fn exec_setmask(args: &[&str]) -> String {
+    if args.is_empty() {
+        return String::from("setmask: usage: setmask <mask>");
+    }
+    let mask = match parse_ipv4(args[0]) {
+        Some(mask) => mask,
+        None => return String::from("setmask: invalid netmask"),
+    };
+    crate::drivers::network::set_netmask(mask);
+    format!("Netmask set to {}", fmt_ipv4(mask))
+}
+
+fn exec_setgw(args: &[&str]) -> String {
+    if args.is_empty() {
+        return String::from("setgw: usage: setgw <gateway>");
+    }
+    let gw = match parse_ipv4(args[0]) {
+        Some(gw) => gw,
+        None => return String::from("setgw: invalid gateway"),
+    };
+    crate::drivers::network::set_gateway(gw);
+    format!("Gateway set to {}", fmt_ipv4(gw))
+}
+
+fn exec_setdns(args: &[&str]) -> String {
+    if args.is_empty() {
+        return String::from("setdns: usage: setdns <dns>");
+    }
+    let dns = match parse_ipv4(args[0]) {
+        Some(dns) => dns,
+        None => return String::from("setdns: invalid dns"),
+    };
+    crate::drivers::network::set_dns(dns);
+    format!("DNS set to {}", fmt_ipv4(dns))
+}
+
+fn exec_dhcp() -> String {
+    match crate::drivers::network::dhcp_configure() {
+        Ok(()) => {
+            let ip = crate::drivers::network::ip();
+            let mask = crate::drivers::network::netmask();
+            let gw = crate::drivers::network::gateway();
+            let dns = crate::drivers::network::dns_server();
+            format!(
+                "DHCP configured:\n  IPv4: {}\n  Netmask: {}\n  Gateway: {}\n  DNS: {}",
+                fmt_ipv4(ip),
+                fmt_ipv4(mask),
+                fmt_ipv4(gw),
+                fmt_ipv4(dns)
+            )
+        }
+        Err(e) => format!("dhcp: {}", e),
+    }
+}
+
+fn exec_dns(args: &[&str]) -> String {
+    if args.is_empty() {
+        return String::from("dns: usage: dns <hostname>");
+    }
+    match crate::drivers::network::dns_resolve_a(args[0]) {
+        Ok(ip) => format!("{} -> {}", args[0], fmt_ipv4(ip)),
+        Err(e) => format!("dns: {}", e),
+    }
+}
+
+fn exec_tcpconnect(args: &[&str]) -> String {
+    if args.len() < 2 {
+        return String::from("tcpconnect: usage: tcpconnect <ip> <port>");
+    }
+    let ip = match parse_ipv4(args[0]) {
+        Some(ip) => ip,
+        None => return String::from("tcpconnect: invalid IPv4 address"),
+    };
+    let port = match args[1].parse::<u16>() {
+        Ok(port) if port > 0 => port,
+        _ => return String::from("tcpconnect: invalid port"),
+    };
+
+    if crate::drivers::network::request_arp(ip).is_err() {
+        let _ = crate::drivers::network::request_arp(crate::drivers::network::gateway());
+    }
+
+    match crate::drivers::network::tcp_connect(ip, port) {
+        Ok(()) => String::from("TCP SYN sent; wait and run tcprecv/netstats"),
+        Err(e) => format!("tcpconnect: {}", e),
+    }
+}
+
+fn exec_tcpsend(args: &[&str]) -> String {
+    if args.is_empty() {
+        return String::from("tcpsend: usage: tcpsend <text>");
+    }
+    let text = args.join(" ");
+    match crate::drivers::network::tcp_send(text.as_bytes()) {
+        Ok(()) => format!("Sent {} bytes", text.len()),
+        Err(e) => format!("tcpsend: {}", e),
+    }
+}
+
+fn exec_tcprecv() -> String {
+    crate::drivers::network::poll();
+    match crate::drivers::network::tcp_read() {
+        Some((buf, len)) => String::from_utf8_lossy(&buf[..len]).into_owned(),
+        None => String::from("(no tcp data)"),
+    }
+}
+
+fn exec_tcpclose() -> String {
+    match crate::drivers::network::tcp_close() {
+        Ok(()) => String::from("TCP connection closed"),
+        Err(e) => format!("tcpclose: {}", e),
+    }
+}
+
+fn exec_httpget(args: &[&str]) -> String {
+    if args.is_empty() {
+        return String::from("httpget: usage: httpget <host-or-ip> [path]");
+    }
+    let host = args[0];
+    let ip = match parse_ipv4(host) {
+        Some(ip) => ip,
+        None => match crate::drivers::network::dns_resolve_a(host) {
+            Ok(ip) => ip,
+            Err(e) => return format!("httpget: dns resolve failed: {}", e),
+        },
+    };
+    let path = if args.len() > 1 { args[1] } else { "/" };
+
+    let _ = crate::drivers::network::request_arp(ip);
+    let _ = crate::drivers::network::request_arp(crate::drivers::network::gateway());
+
+    if let Err(e) = crate::drivers::network::tcp_connect(ip, 80) {
+        return format!("httpget: {}", e);
+    }
+
+    let start = crate::proc::scheduler::ticks();
+    while !crate::drivers::network::tcp_is_connected() && (crate::proc::scheduler::ticks() - start) < 2500 {
+        crate::drivers::network::poll();
+        crate::arch::halt();
+    }
+    if !crate::drivers::network::tcp_is_connected() {
+        let _ = crate::drivers::network::tcp_close();
+        return String::from("httpget: tcp connect timeout");
+    }
+
+    let req = format!("GET {} HTTP/1.0\r\nHost: {}\r\nUser-Agent: CottonOS\r\n\r\n", path, host);
+    if let Err(e) = crate::drivers::network::tcp_send(req.as_bytes()) {
+        let _ = crate::drivers::network::tcp_close();
+        return format!("httpget send failed: {}", e);
+    }
+
+    let mut out = String::new();
+    for attempt in 0..2 {
+        let read_start = crate::proc::scheduler::ticks();
+        while (crate::proc::scheduler::ticks() - read_start) < 2500 {
+            crate::drivers::network::poll();
+            if let Some((buf, len)) = crate::drivers::network::tcp_read() {
+                out.push_str(&String::from_utf8_lossy(&buf[..len]));
+            }
+            crate::arch::halt();
+        }
+
+        if !out.is_empty() {
+            break;
+        }
+
+        if attempt == 0 {
+            if !crate::drivers::network::tcp_is_connected() {
+                let _ = crate::drivers::network::tcp_close();
+                if let Err(e) = crate::drivers::network::tcp_connect(ip, 80) {
+                    return format!("httpget reconnect failed: {}", e);
+                }
+
+                let reconnect_start = crate::proc::scheduler::ticks();
+                while !crate::drivers::network::tcp_is_connected()
+                    && (crate::proc::scheduler::ticks() - reconnect_start) < 2500
+                {
+                    crate::drivers::network::poll();
+                    crate::arch::halt();
+                }
+                if !crate::drivers::network::tcp_is_connected() {
+                    let _ = crate::drivers::network::tcp_close();
+                    return String::from("httpget: tcp reconnect timeout");
+                }
+            }
+
+            if let Err(e) = crate::drivers::network::tcp_send(req.as_bytes()) {
+                let _ = crate::drivers::network::tcp_close();
+                return format!("httpget retry failed: {}", e);
+            }
+        }
+    }
+    let _ = crate::drivers::network::tcp_close();
+    if out.is_empty() {
+        String::from("httpget: no response")
+    } else {
+        out
+    }
+}
+
+fn exec_udpsend(args: &[&str]) -> String {
+    if args.len() < 4 {
+        return String::from("udpsend: usage: udpsend <ip> <src_port> <dst_port> <text>");
+    }
+
+    let ip = match parse_ipv4(args[0]) {
+        Some(ip) => ip,
+        None => return String::from("udpsend: invalid IPv4 address"),
+    };
+    let src_port = match args[1].parse::<u16>() {
+        Ok(port) if port > 0 => port,
+        _ => return String::from("udpsend: invalid src_port"),
+    };
+    let dst_port = match args[2].parse::<u16>() {
+        Ok(port) if port > 0 => port,
+        _ => return String::from("udpsend: invalid dst_port"),
+    };
+
+    let payload = args[3..].join(" ");
+    let _ = crate::drivers::network::request_arp(ip);
+    let _ = crate::drivers::network::request_arp(crate::drivers::network::gateway());
+
+    match crate::drivers::network::udp_send(ip, src_port, dst_port, payload.as_bytes()) {
+        Ok(()) => format!("UDP sent ({} bytes) to {}:{}", payload.len(), fmt_ipv4(ip), dst_port),
+        Err(e) => format!("udpsend: {}", e),
+    }
+}
+
+fn exec_udprecv() -> String {
+    crate::drivers::network::poll();
+    match crate::drivers::network::udp_recv() {
+        Some((src_ip, src_port, dst_port, payload, len)) => {
+            let text = String::from_utf8_lossy(&payload[..len]).into_owned();
+            format!(
+                "UDP {}:{} -> local:{} ({} bytes): {}",
+                fmt_ipv4(src_ip),
+                src_port,
+                dst_port,
+                len,
+                text
+            )
+        }
+        None => String::from("(no udp datagrams)"),
     }
 }
 
@@ -393,6 +785,24 @@ pub fn run() -> ! {
             "ps" => cmd_ps(),
             "uptime" => cmd_uptime(),
             "echo" => cmd_echo(args),
+            "net" => cmd_net(),
+            "netstats" => cmd_netstats(),
+            "arptable" => cmd_arptable(),
+            "arp" => cmd_arp(args),
+            "ping" => cmd_ping(args),
+            "dhcp" => cmd_dhcp(),
+            "dns" => cmd_dns(args),
+            "setip" => cmd_setip(args),
+            "setmask" => cmd_setmask(args),
+            "setgw" => cmd_setgw(args),
+            "setdns" => cmd_setdns(args),
+            "tcpconnect" => cmd_tcpconnect(args),
+            "tcpsend" => cmd_tcpsend(args),
+            "tcprecv" => cmd_tcprecv(),
+            "tcpclose" => cmd_tcpclose(),
+            "httpget" => cmd_httpget(args),
+            "udpsend" => cmd_udpsend(args),
+            "udprecv" => cmd_udprecv(),
             "panic" => cmd_panic(),
             "reboot" => cmd_reboot(),
             "halt" => cmd_halt(),
@@ -415,6 +825,7 @@ fn read_line(buf: &mut String) {
     loop {
         // Wait for key
         while !crate::drivers::keyboard::has_key() {
+            crate::drivers::network::poll();
             crate::arch::halt();
         }
         
@@ -448,6 +859,9 @@ fn read_line(buf: &mut String) {
 
 fn cmd_help() {
     kprintln!("Commands: help, clear, info, mem, df, ps, uptime, echo, sync, reboot, halt");
+    kprintln!("Network:  net, netstats, arptable, arp, ping, dhcp, dns, setip, setmask, setgw, setdns");
+    kprintln!("TCP:      tcpconnect, tcpsend, tcprecv, tcpclose, httpget");
+    kprintln!("UDP:      udpsend, udprecv");
     kprintln!("Files:    ls, cd, pwd, cat, touch, mkdir, rm, write");
     kprintln!("");
     kprintln!("Files are stored persistently on disk (CottonFS).");
@@ -470,6 +884,24 @@ fn cmd_help_detail(cmd: &str) {
         "ps" => kprintln!("ps - List running processes"),
         "uptime" => kprintln!("uptime - Show system uptime"),
         "echo" => kprintln!("echo <text> - Print text"),
+        "net" => kprintln!("net - Show network interface information"),
+        "netstats" => kprintln!("netstats - Show network packet counters"),
+        "arptable" => kprintln!("arptable - Show ARP cache"),
+        "arp" => kprintln!("arp <ip> - Send ARP request to host"),
+        "ping" => kprintln!("ping <ip> - Send ICMP echo request"),
+        "dhcp" => kprintln!("dhcp - Request IPv4 config via DHCP"),
+        "dns" => kprintln!("dns <host> - Resolve hostname to IPv4"),
+        "setip" => kprintln!("setip <ip> - Set interface IPv4 address"),
+        "setmask" => kprintln!("setmask <mask> - Set interface netmask"),
+        "setgw" => kprintln!("setgw <ip> - Set default gateway"),
+        "setdns" => kprintln!("setdns <ip> - Set DNS server"),
+        "tcpconnect" => kprintln!("tcpconnect <ip> <port> - Open TCP connection"),
+        "tcpsend" => kprintln!("tcpsend <text> - Send TCP payload"),
+        "tcprecv" => kprintln!("tcprecv - Read buffered TCP payload"),
+        "tcpclose" => kprintln!("tcpclose - Close active TCP connection"),
+        "httpget" => kprintln!("httpget <ip> [path] - Basic HTTP GET"),
+        "udpsend" => kprintln!("udpsend <ip> <src_port> <dst_port> <text> - Send UDP datagram"),
+        "udprecv" => kprintln!("udprecv - Receive one UDP datagram"),
         "clear" => kprintln!("clear - Clear the screen"),
         "reboot" => kprintln!("reboot - Restart the system"),
         "halt" => kprintln!("halt - Stop the CPU"),
@@ -550,6 +982,78 @@ fn cmd_uptime() {
 
 fn cmd_echo(args: &[&str]) {
     kprintln!("{}", args.join(" "));
+}
+
+fn cmd_net() {
+    kprintln!("{}", exec_net());
+}
+
+fn cmd_netstats() {
+    kprintln!("{}", exec_netstats());
+}
+
+fn cmd_arptable() {
+    kprintln!("{}", exec_arptable());
+}
+
+fn cmd_arp(args: &[&str]) {
+    kprintln!("{}", exec_arp(args));
+}
+
+fn cmd_ping(args: &[&str]) {
+    kprintln!("{}", exec_ping(args));
+}
+
+fn cmd_dhcp() {
+    kprintln!("{}", exec_dhcp());
+}
+
+fn cmd_dns(args: &[&str]) {
+    kprintln!("{}", exec_dns(args));
+}
+
+fn cmd_setip(args: &[&str]) {
+    kprintln!("{}", exec_setip(args));
+}
+
+fn cmd_setmask(args: &[&str]) {
+    kprintln!("{}", exec_setmask(args));
+}
+
+fn cmd_setgw(args: &[&str]) {
+    kprintln!("{}", exec_setgw(args));
+}
+
+fn cmd_setdns(args: &[&str]) {
+    kprintln!("{}", exec_setdns(args));
+}
+
+fn cmd_tcpconnect(args: &[&str]) {
+    kprintln!("{}", exec_tcpconnect(args));
+}
+
+fn cmd_tcpsend(args: &[&str]) {
+    kprintln!("{}", exec_tcpsend(args));
+}
+
+fn cmd_tcprecv() {
+    kprintln!("{}", exec_tcprecv());
+}
+
+fn cmd_tcpclose() {
+    kprintln!("{}", exec_tcpclose());
+}
+
+fn cmd_httpget(args: &[&str]) {
+    kprintln!("{}", exec_httpget(args));
+}
+
+fn cmd_udpsend(args: &[&str]) {
+    kprintln!("{}", exec_udpsend(args));
+}
+
+fn cmd_udprecv() {
+    kprintln!("{}", exec_udprecv());
 }
 
 fn cmd_panic() {

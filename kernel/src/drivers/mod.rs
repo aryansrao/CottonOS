@@ -5,12 +5,14 @@ pub mod keyboard;
 pub mod storage;
 pub mod graphics;
 pub mod mouse;
+pub mod network;
 
 /// Initialize all drivers
 pub fn init() {
     // Initialize storage FIRST - filesystem needs this
     crate::kprintln!("[DRIVERS] Initializing storage...");
     storage::init();
+    network::init();
     
     // Initialize other basic drivers
     console::init();

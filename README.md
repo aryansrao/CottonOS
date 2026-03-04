@@ -40,6 +40,15 @@
 - **System Calls** - Comprehensive syscall interface (40+ calls) for file I/O, process management, and memory operations
 - **Device Drivers** - Keyboard, mouse, ATA storage, serial, and graphics drivers
 
+### Networking (Current)
+
+- **RTL8139 NIC Driver** - PCI discovery, init, RX/TX frame handling in QEMU
+- **L2/L3 Protocols** - Ethernet, ARP cache + ARP reply/request, IPv4 parsing/dispatch
+- **Core Transport** - ICMP echo, UDP send/receive, basic TCP client connection flow
+- **Auto Configuration** - DHCP lease acquisition and DNS resolver for A records
+- **Shell Networking Tools** - `net`, `arp`, `ping`, `dhcp`, `dns`, `httpget`, and TCP/UDP test commands
+- **Stability Hardening** - Bounded poll loops, non-blocking IRQ lock path, ARP auto-resolution retries
+
 ### Desktop Environment
 
 - **Window Manager** - Full window management with dragging, focus, z-order, and macOS-style controls
@@ -88,6 +97,9 @@ The integrated terminal provides full shell access within the GUI environment:
 **Supported Commands:**
 - **Filesystem:** `ls`, `cd`, `pwd`, `cat`, `touch`, `mkdir`, `rm`, `write`
 - **System Info:** `mem`, `df`, `ps`, `uptime`, `info`
+- **Network:** `net`, `netstats`, `arptable`, `arp`, `ping`, `dhcp`, `dns`, `setip`, `setmask`, `setgw`, `setdns`
+- **TCP:** `tcpconnect`, `tcpsend`, `tcprecv`, `tcpclose`, `httpget`
+- **UDP:** `udpsend`, `udprecv`
 - **Utilities:** `echo`, `clear`, `help`, `sync`
 - **Power:** `reboot`, `halt`
 
@@ -231,6 +243,19 @@ make debug
 make test
 ```
 
+### Networking Quick Start (Inside CottonOS Shell)
+
+```text
+net
+dhcp
+dns example.com
+httpget example.com /
+```
+
+Notes:
+- `arp <ip>` sends an ARP request manually, but normal TCP/UDP flows now perform ARP auto-resolution with retries.
+- `httpget` is a minimal HTTP/1.0 client (no TLS/HTTPS yet), intended as a browser-foundation diagnostic command.
+
 ### Bochs
 
 Configure `bochsrc.txt` with your paths, then:
@@ -244,6 +269,7 @@ bochs -f bochsrc.txt
 ```
 -m 512M                     # 512MB RAM
 -device VGA,vgamem_mb=64    # VGA with 64MB video memory
+-nic user,model=rtl8139     # User-mode networking with RTL8139 NIC
 -serial stdio               # Serial output to terminal
 -cdrom build/cottonos.iso   # Boot from ISO
 -drive file=disk.img,format=raw,if=ide  # Persistent storage
