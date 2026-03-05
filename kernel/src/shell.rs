@@ -142,7 +142,7 @@ fn exec_help_detail(cmd: &str) -> String {
         "tcpsend" => String::from("tcpsend <text> - Send TCP payload on active connection"),
         "tcprecv" => String::from("tcprecv - Read buffered TCP payload"),
         "tcpclose" => String::from("tcpclose - Close active TCP connection"),
-        "httpget" => String::from("httpget <ip> [path] - Basic HTTP GET over TCP"),
+        "httpget" => String::from("httpget <host-or-ip> [path] - Basic HTTP GET over TCP (no HTTPS)"),
         "udpsend" => String::from("udpsend <ip> <src_port> <dst_port> <text> - Send UDP datagram"),
         "udprecv" => String::from("udprecv - Receive one UDP datagram"),
         "clear" => String::from("clear - Clear the screen"),
@@ -398,7 +398,7 @@ fn exec_httpget(args: &[&str]) -> String {
     }
 
     let start = crate::proc::scheduler::ticks();
-    while !crate::drivers::network::tcp_is_connected() && (crate::proc::scheduler::ticks() - start) < 2500 {
+    while !crate::drivers::network::tcp_is_connected() && (crate::proc::scheduler::ticks() - start) < 1500 {
         crate::drivers::network::poll();
         crate::arch::halt();
     }
@@ -414,46 +414,29 @@ fn exec_httpget(args: &[&str]) -> String {
     }
 
     let mut out = String::new();
-    for attempt in 0..2 {
-        let read_start = crate::proc::scheduler::ticks();
-        while (crate::proc::scheduler::ticks() - read_start) < 2500 {
-            crate::drivers::network::poll();
-            if let Some((buf, len)) = crate::drivers::network::tcp_read() {
-                out.push_str(&String::from_utf8_lossy(&buf[..len]));
-            }
-            crate::arch::halt();
+    let read_start = crate::proc::scheduler::ticks();
+    let mut last_data_tick = read_start;
+    let mut saw_data = false;
+
+    while (crate::proc::scheduler::ticks() - read_start) < 4000 {
+        crate::drivers::network::poll();
+        if let Some((buf, len)) = crate::drivers::network::tcp_read() {
+            out.push_str(&String::from_utf8_lossy(&buf[..len]));
+            saw_data = true;
+            last_data_tick = crate::proc::scheduler::ticks();
         }
 
-        if !out.is_empty() {
+        if !crate::drivers::network::tcp_is_connected() {
             break;
         }
 
-        if attempt == 0 {
-            if !crate::drivers::network::tcp_is_connected() {
-                let _ = crate::drivers::network::tcp_close();
-                if let Err(e) = crate::drivers::network::tcp_connect(ip, 80) {
-                    return format!("httpget reconnect failed: {}", e);
-                }
-
-                let reconnect_start = crate::proc::scheduler::ticks();
-                while !crate::drivers::network::tcp_is_connected()
-                    && (crate::proc::scheduler::ticks() - reconnect_start) < 2500
-                {
-                    crate::drivers::network::poll();
-                    crate::arch::halt();
-                }
-                if !crate::drivers::network::tcp_is_connected() {
-                    let _ = crate::drivers::network::tcp_close();
-                    return String::from("httpget: tcp reconnect timeout");
-                }
-            }
-
-            if let Err(e) = crate::drivers::network::tcp_send(req.as_bytes()) {
-                let _ = crate::drivers::network::tcp_close();
-                return format!("httpget retry failed: {}", e);
-            }
+        if saw_data && (crate::proc::scheduler::ticks() - last_data_tick) > 250 {
+            break;
         }
+
+        crate::arch::halt();
     }
+
     let _ = crate::drivers::network::tcp_close();
     if out.is_empty() {
         String::from("httpget: no response")
@@ -899,7 +882,7 @@ fn cmd_help_detail(cmd: &str) {
         "tcpsend" => kprintln!("tcpsend <text> - Send TCP payload"),
         "tcprecv" => kprintln!("tcprecv - Read buffered TCP payload"),
         "tcpclose" => kprintln!("tcpclose - Close active TCP connection"),
-        "httpget" => kprintln!("httpget <ip> [path] - Basic HTTP GET"),
+        "httpget" => kprintln!("httpget <host-or-ip> [path] - Basic HTTP GET (no HTTPS)"),
         "udpsend" => kprintln!("udpsend <ip> <src_port> <dst_port> <text> - Send UDP datagram"),
         "udprecv" => kprintln!("udprecv - Receive one UDP datagram"),
         "clear" => kprintln!("clear - Clear the screen"),

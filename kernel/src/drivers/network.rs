@@ -950,7 +950,17 @@ impl Rtl8139 {
 
             if status == 0 || length < 4 || length > 2048 {
                 RX_ERRORS.fetch_add(1, Ordering::Relaxed);
-                break;
+
+                let advance = if length >= 4 && length <= 2048 {
+                    (length + 4 + 3) & !3
+                } else {
+                    4
+                };
+
+                self.rx_offset = (self.rx_offset + advance) % RX_BUFFER_SIZE;
+                io_write_u16(self.io_base, REG_CAPR, (self.rx_offset as u16).wrapping_sub(16));
+                processed += 1;
+                continue;
             }
 
             let frame_len = length - 4;
@@ -1410,17 +1420,56 @@ fn skip_dns_name(packet: &[u8], mut idx: usize) -> Option<usize> {
     }
 }
 
+fn scan_dns_rrs_for_a(packet: &[u8], mut cur: usize, count: usize) -> Result<(usize, Option<[u8; 4]>), &'static str> {
+    for _ in 0..count {
+        cur = skip_dns_name(packet, cur).ok_or("dns malformed answer name")?;
+        if cur + 10 > packet.len() {
+            return Err("dns malformed answer header");
+        }
+
+        let rr_type = u16::from_be_bytes([packet[cur], packet[cur + 1]]);
+        let rr_class = u16::from_be_bytes([packet[cur + 2], packet[cur + 3]]);
+        let rdlen = u16::from_be_bytes([packet[cur + 8], packet[cur + 9]]) as usize;
+        cur += 10;
+
+        if cur + rdlen > packet.len() {
+            return Err("dns malformed rdata");
+        }
+
+        if rr_type == 1 && rr_class == 1 && rdlen == 4 {
+            return Ok((cur + rdlen, Some([packet[cur], packet[cur + 1], packet[cur + 2], packet[cur + 3]])));
+        }
+
+        cur += rdlen;
+    }
+
+    Ok((cur, None))
+}
+
 pub fn dns_resolve_a(host: &str) -> Result<[u8; 4], &'static str> {
     if host.is_empty() || host.len() > 240 {
         return Err("invalid host name");
     }
 
-    let dns = dns_server();
-    let query_id = DNS_ID_GEN.fetch_add(1, Ordering::Relaxed);
-    let src_port = 53000u16.wrapping_add(query_id % 1000);
+    let primary_dns = dns_server();
+    let gateway_dns = gateway();
+    let mut dns_targets = [[0u8; 4]; 2];
+    let mut dns_target_count = 0usize;
+
+    if primary_dns != [0, 0, 0, 0] {
+        dns_targets[dns_target_count] = primary_dns;
+        dns_target_count += 1;
+    }
+    if gateway_dns != [0, 0, 0, 0] && gateway_dns != primary_dns {
+        dns_targets[dns_target_count] = gateway_dns;
+        dns_target_count += 1;
+    }
+    if dns_target_count == 0 {
+        dns_targets[0] = DEFAULT_DNS;
+        dns_target_count = 1;
+    }
 
     let mut query = [0u8; 512];
-    query[0..2].copy_from_slice(&query_id.to_be_bytes());
     query[2..4].copy_from_slice(&0x0100u16.to_be_bytes());
     query[4..6].copy_from_slice(&1u16.to_be_bytes());
 
@@ -1442,54 +1491,57 @@ pub fn dns_resolve_a(host: &str) -> Result<[u8; 4], &'static str> {
     query[idx..(idx + 2)].copy_from_slice(&1u16.to_be_bytes());
     idx += 2;
 
-    let _ = request_arp(dns);
-    let _ = request_arp(gateway());
-    udp_send(dns, src_port, 53, &query[..idx])?;
+    for dns in dns_targets.iter().copied().take(dns_target_count) {
+        for _attempt in 0..3 {
+            let query_id = DNS_ID_GEN.fetch_add(1, Ordering::Relaxed);
+            let src_port = 53000u16.wrapping_add(query_id % 1000);
+            query[0..2].copy_from_slice(&query_id.to_be_bytes());
 
-    let deadline = crate::proc::scheduler::ticks() + 3000;
-    while crate::proc::scheduler::ticks() < deadline {
-        poll();
-        if let Some((src_ip, src_port_rx, dst_port, payload, len)) = udp_recv() {
-            if src_ip != dns || src_port_rx != 53 || dst_port != src_port || len < 12 {
-                continue;
-            }
-            let resp_id = u16::from_be_bytes([payload[0], payload[1]]);
-            if resp_id != query_id {
-                continue;
-            }
+            let _ = request_arp(dns);
+            let _ = request_arp(gateway());
+            udp_send(dns, src_port, 53, &query[..idx])?;
 
-            let qdcount = u16::from_be_bytes([payload[4], payload[5]]) as usize;
-            let ancount = u16::from_be_bytes([payload[6], payload[7]]) as usize;
+            let deadline = crate::proc::scheduler::ticks() + 1200;
+            while crate::proc::scheduler::ticks() < deadline {
+                poll();
+                if let Some((_src_ip, src_port_rx, dst_port, payload, len)) = udp_recv() {
+                    if src_port_rx != 53 || dst_port != src_port || len < 12 {
+                        continue;
+                    }
+                    let resp_id = u16::from_be_bytes([payload[0], payload[1]]);
+                    if resp_id != query_id {
+                        continue;
+                    }
 
-            let mut cur = 12usize;
-            for _ in 0..qdcount {
-                cur = skip_dns_name(&payload[..len], cur).ok_or("dns malformed question")?;
-                if cur + 4 > len {
-                    return Err("dns malformed question tail");
+                    let qdcount = u16::from_be_bytes([payload[4], payload[5]]) as usize;
+                    let ancount = u16::from_be_bytes([payload[6], payload[7]]) as usize;
+                    let nscount = u16::from_be_bytes([payload[8], payload[9]]) as usize;
+                    let arcount = u16::from_be_bytes([payload[10], payload[11]]) as usize;
+
+                    let packet = &payload[..len];
+                    let mut cur = 12usize;
+                    for _ in 0..qdcount {
+                        cur = skip_dns_name(packet, cur).ok_or("dns malformed question")?;
+                        if cur + 4 > len {
+                            return Err("dns malformed question tail");
+                        }
+                        cur += 4;
+                    }
+
+                    let (next_cur, answer_a) = scan_dns_rrs_for_a(packet, cur, ancount)?;
+                    if let Some(ip) = answer_a {
+                        return Ok(ip);
+                    }
+
+                    let (next_cur, _ns_a) = scan_dns_rrs_for_a(packet, next_cur, nscount)?;
+                    let (_next_cur, additional_a) = scan_dns_rrs_for_a(packet, next_cur, arcount)?;
+                    if let Some(ip) = additional_a {
+                        return Ok(ip);
+                    }
                 }
-                cur += 4;
-            }
-
-            for _ in 0..ancount {
-                cur = skip_dns_name(&payload[..len], cur).ok_or("dns malformed answer name")?;
-                if cur + 10 > len {
-                    return Err("dns malformed answer header");
-                }
-                let rr_type = u16::from_be_bytes([payload[cur], payload[cur + 1]]);
-                let rr_class = u16::from_be_bytes([payload[cur + 2], payload[cur + 3]]);
-                let rdlen = u16::from_be_bytes([payload[cur + 8], payload[cur + 9]]) as usize;
-                cur += 10;
-                if cur + rdlen > len {
-                    return Err("dns malformed rdata");
-                }
-
-                if rr_type == 1 && rr_class == 1 && rdlen == 4 {
-                    return Ok([payload[cur], payload[cur + 1], payload[cur + 2], payload[cur + 3]]);
-                }
-                cur += rdlen;
+                crate::arch::halt();
             }
         }
-        crate::arch::halt();
     }
 
     Err("dns timeout/no A record")
