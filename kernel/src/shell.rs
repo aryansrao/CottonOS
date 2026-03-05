@@ -64,7 +64,7 @@ pub fn execute_command(line: &str) -> String {
     match cmd {
         "help" => {
             if args.is_empty() {
-                String::from("Commands: help, clear, info, mem, df, ps, uptime, echo, sync, reboot, halt\nNetwork:  net, netstats, arptable, arp, ping, dhcp, dns, setip, setmask, setgw, setdns\nTCP:      tcpconnect, tcpsend, tcprecv, tcpclose, httpget\nUDP:      udpsend, udprecv\nFiles:    ls, cd, pwd, cat, touch, mkdir, rm, write\n\nFiles are stored persistently on disk (CottonFS).")
+                String::from("Commands: help, clear, info, mem, df, ps, uptime, echo, sync, reboot, halt\nNetwork:  net, netstats, arptable, arp, ping, dhcp, dns, setip, setmask, setgw, setdns\nTCP:      tcpconnect, tcpsend, tcprecv, tcpclose, httpget, httpsget\nUDP:      udpsend, udprecv\nFiles:    ls, cd, pwd, cat, touch, mkdir, rm, write\n\nFiles are stored persistently on disk (CottonFS).")
             } else {
                 exec_help_detail(args[0])
             }
@@ -93,6 +93,7 @@ pub fn execute_command(line: &str) -> String {
         "tcprecv" => exec_tcprecv(),
         "tcpclose" => exec_tcpclose(),
         "httpget" => exec_httpget(args),
+        "httpsget" => exec_httpsget(args),
         "udpsend" => exec_udpsend(args),
         "udprecv" => exec_udprecv(),
         "panic" => { panic!("User-triggered panic"); }
@@ -143,6 +144,7 @@ fn exec_help_detail(cmd: &str) -> String {
         "tcprecv" => String::from("tcprecv - Read buffered TCP payload"),
         "tcpclose" => String::from("tcpclose - Close active TCP connection"),
         "httpget" => String::from("httpget <host-or-ip> [path] - Basic HTTP GET over TCP (no HTTPS)"),
+        "httpsget" => String::from("httpsget <host-or-ip> [path] - HTTPS GET over in-kernel TLS"),
         "udpsend" => String::from("udpsend <ip> <src_port> <dst_port> <text> - Send UDP datagram"),
         "udprecv" => String::from("udprecv - Receive one UDP datagram"),
         "clear" => String::from("clear - Clear the screen"),
@@ -442,6 +444,30 @@ fn exec_httpget(args: &[&str]) -> String {
         String::from("httpget: no response")
     } else {
         out
+    }
+}
+
+fn exec_httpsget(args: &[&str]) -> String {
+    if args.is_empty() {
+        return String::from("httpsget: usage: httpsget <host-or-ip> [path]");
+    }
+
+    let host = args[0];
+    let ip = match parse_ipv4(host) {
+        Some(ip) => ip,
+        None => match crate::drivers::network::dns_resolve_a(host) {
+            Ok(ip) => ip,
+            Err(e) => return format!("httpsget: dns resolve failed: {}", e),
+        },
+    };
+
+    let path = if args.len() > 1 { args[1] } else { "/" };
+    let _ = crate::drivers::network::request_arp(ip);
+    let _ = crate::drivers::network::request_arp(crate::drivers::network::gateway());
+
+    match crate::crypto::tls::https_get(host, ip, path) {
+        Ok(resp) => resp,
+        Err(e) => e,
     }
 }
 
@@ -784,6 +810,7 @@ pub fn run() -> ! {
             "tcprecv" => cmd_tcprecv(),
             "tcpclose" => cmd_tcpclose(),
             "httpget" => cmd_httpget(args),
+            "httpsget" => cmd_httpsget(args),
             "udpsend" => cmd_udpsend(args),
             "udprecv" => cmd_udprecv(),
             "panic" => cmd_panic(),
@@ -843,7 +870,7 @@ fn read_line(buf: &mut String) {
 fn cmd_help() {
     kprintln!("Commands: help, clear, info, mem, df, ps, uptime, echo, sync, reboot, halt");
     kprintln!("Network:  net, netstats, arptable, arp, ping, dhcp, dns, setip, setmask, setgw, setdns");
-    kprintln!("TCP:      tcpconnect, tcpsend, tcprecv, tcpclose, httpget");
+    kprintln!("TCP:      tcpconnect, tcpsend, tcprecv, tcpclose, httpget, httpsget");
     kprintln!("UDP:      udpsend, udprecv");
     kprintln!("Files:    ls, cd, pwd, cat, touch, mkdir, rm, write");
     kprintln!("");
@@ -883,6 +910,7 @@ fn cmd_help_detail(cmd: &str) {
         "tcprecv" => kprintln!("tcprecv - Read buffered TCP payload"),
         "tcpclose" => kprintln!("tcpclose - Close active TCP connection"),
         "httpget" => kprintln!("httpget <host-or-ip> [path] - Basic HTTP GET (no HTTPS)"),
+        "httpsget" => kprintln!("httpsget <host-or-ip> [path] - HTTPS GET over TLS"),
         "udpsend" => kprintln!("udpsend <ip> <src_port> <dst_port> <text> - Send UDP datagram"),
         "udprecv" => kprintln!("udprecv - Receive one UDP datagram"),
         "clear" => kprintln!("clear - Clear the screen"),
@@ -1029,6 +1057,10 @@ fn cmd_tcpclose() {
 
 fn cmd_httpget(args: &[&str]) {
     kprintln!("{}", exec_httpget(args));
+}
+
+fn cmd_httpsget(args: &[&str]) {
+    kprintln!("{}", exec_httpsget(args));
 }
 
 fn cmd_udpsend(args: &[&str]) {

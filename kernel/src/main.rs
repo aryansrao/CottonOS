@@ -18,6 +18,7 @@ pub mod mm;
 pub mod proc;
 pub mod fs;
 pub mod drivers;
+pub mod crypto;
 pub mod syscall;
 pub mod sync;
 pub mod shell;

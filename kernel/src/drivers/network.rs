@@ -57,6 +57,7 @@ const DEFAULT_IP: [u8; 4] = [10, 0, 2, 15];
 const DEFAULT_NETMASK: [u8; 4] = [255, 255, 255, 0];
 const DEFAULT_GATEWAY: [u8; 4] = [10, 0, 2, 2];
 const DEFAULT_DNS: [u8; 4] = [10, 0, 2, 3];
+const TCP_RECV_BUF_SIZE: usize = 32 * 1024;
 
 const BROADCAST_MAC: [u8; 6] = [0xFF; 6];
 
@@ -143,7 +144,7 @@ struct TcpClient {
     src_port: u16,
     seq: u32,
     ack: u32,
-    recv_buf: [u8; 1024],
+    recv_buf: [u8; TCP_RECV_BUF_SIZE],
     recv_len: usize,
 }
 
@@ -157,7 +158,7 @@ impl TcpClient {
             src_port: 0,
             seq: 0,
             ack: 0,
-            recv_buf: [0; 1024],
+            recv_buf: [0; TCP_RECV_BUF_SIZE],
             recv_len: 0,
         }
     }
@@ -861,7 +862,7 @@ impl Rtl8139 {
             return;
         }
 
-        let mut ack_advance = payload.len() as u32;
+        let mut ack_advance = 0u32;
 
         if !payload.is_empty() {
             let copy_len = core::cmp::min(payload.len(), client.recv_buf.len().saturating_sub(client.recv_len));
@@ -869,6 +870,7 @@ impl Rtl8139 {
             let end = start + copy_len;
             client.recv_buf[start..end].copy_from_slice(&payload[..copy_len]);
             client.recv_len += copy_len;
+            ack_advance = copy_len as u32;
         }
 
         if (flags & 0x01) != 0 {
@@ -1176,10 +1178,34 @@ pub fn tcp_read() -> Option<([u8; 1024], usize)> {
         return None;
     }
     let mut out = [0u8; 1024];
-    let len = client.recv_len;
+    let recv_len = client.recv_len;
+    let len = core::cmp::min(recv_len, out.len());
     out[..len].copy_from_slice(&client.recv_buf[..len]);
-    client.recv_len = 0;
+    if len < recv_len {
+        client.recv_buf.copy_within(len..recv_len, 0);
+    }
+    client.recv_len = recv_len - len;
     Some((out, len))
+}
+
+pub fn tcp_read_into(buf: &mut [u8]) -> usize {
+    if buf.is_empty() {
+        return 0;
+    }
+
+    let mut client = TCP_CLIENT.lock();
+    if client.recv_len == 0 {
+        return 0;
+    }
+
+    let recv_len = client.recv_len;
+    let len = core::cmp::min(recv_len, buf.len());
+    buf[..len].copy_from_slice(&client.recv_buf[..len]);
+    if len < recv_len {
+        client.recv_buf.copy_within(len..recv_len, 0);
+    }
+    client.recv_len = recv_len - len;
+    len
 }
 
 pub fn tcp_close() -> Result<(), &'static str> {

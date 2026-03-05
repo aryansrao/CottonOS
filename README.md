@@ -46,7 +46,7 @@
 - **L2/L3 Protocols** - Ethernet, ARP cache + ARP reply/request, IPv4 parsing/dispatch
 - **Core Transport** - ICMP echo, UDP send/receive, basic TCP client connection flow
 - **Auto Configuration** - DHCP lease acquisition and DNS resolver for A records
-- **Shell Networking Tools** - `net`, `arp`, `ping`, `dhcp`, `dns`, `httpget`, and TCP/UDP test commands
+- **Shell Networking Tools** - `net`, `arp`, `ping`, `dhcp`, `dns`, `httpget`, `httpsget`, and TCP/UDP test commands
 - **Stability Hardening** - Bounded poll loops, non-blocking IRQ lock path, ARP auto-resolution retries
 
 ### Desktop Environment
@@ -98,7 +98,7 @@ The integrated terminal provides full shell access within the GUI environment:
 - **Filesystem:** `ls`, `cd`, `pwd`, `cat`, `touch`, `mkdir`, `rm`, `write`
 - **System Info:** `mem`, `df`, `ps`, `uptime`, `info`
 - **Network:** `net`, `netstats`, `arptable`, `arp`, `ping`, `dhcp`, `dns`, `setip`, `setmask`, `setgw`, `setdns`
-- **TCP:** `tcpconnect`, `tcpsend`, `tcprecv`, `tcpclose`, `httpget`
+- **TCP:** `tcpconnect`, `tcpsend`, `tcprecv`, `tcpclose`, `httpget`, `httpsget`
 - **UDP:** `udpsend`, `udprecv`
 - **Utilities:** `echo`, `clear`, `help`, `sync`
 - **Power:** `reboot`, `halt`
@@ -250,11 +250,13 @@ net
 dhcp
 dns example.com
 httpget example.com /
+httpsget example.com /
 ```
 
 Notes:
 - `arp <ip>` sends an ARP request manually, but normal TCP/UDP flows now perform ARP auto-resolution with retries.
-- `httpget` is a minimal HTTP/1.0 client (no TLS/HTTPS yet), intended as a browser-foundation diagnostic command.
+- `httpget` is a minimal plain HTTP diagnostic command.
+- `httpsget` performs TLS in-kernel and fetches HTTPS content. Current implementation uses encrypted TLS transport but does not yet validate server certificates (trust model hardening pending).
 
 ### Bochs
 

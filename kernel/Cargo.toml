@@ -16,6 +16,9 @@ spin = "0.9"
 bitflags = "2.4"
 volatile = "0.5"
 linked_list_allocator = "0.10"
+embedded-tls = { version = "0.18", default-features = false, features = ["alloc"] }
+embedded-io = "0.7"
+rand_core = { version = "0.6", default-features = false }
 
 [dependencies.lazy_static]
 version = "1.4"
